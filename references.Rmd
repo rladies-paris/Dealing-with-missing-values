@@ -1,0 +1,29 @@
+---
+title: "Useful links"
+author: "Diane"
+date: "4 mai 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+## Gestion des données manquantes avec missMDA youtube
+
+https://www.youtube.com/watch?v=7XYEJ-63O1E
+
+## Tutoriel
+
+How to use missMDA to apply a statistical method on an incomplete data set ? http://vincentaudigier.weebly.com/uploads/1/7/3/1/17317324/appendix_online.pdf
+
+## Journal of statistical software:
+
+https://www.jstatsoft.org/article/view/v045i03
+
+https://www.jstatsoft.org/article/view/v070i01
+
+https://www.jstatsoft.org/article/view/v045i07/v45i07.pdf

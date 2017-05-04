@@ -1,0 +1,253 @@
+---
+title: "Dealing with missing values in ozone dataset"
+author: "Julie Josse"
+date: "4 mai 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+
+###############################
+#### Ozone data set
+###############################
+
+ozo <- read.table("http://juliejosse.com/wp-content/uploads/2016/06/ozoneNA.csv",header=TRUE,sep=",",row.names=1)
+WindDirection <- ozo[,12]
+don <- ozo[,1:11]   #### keep the continuous variables
+summary(don)
+head(don)
+dim(don)
+
+######################################################
+#### Visualization of the pattern of missing values
+######################################################
+
+library(VIM)
+res<-summary(aggr(don, sortVar=TRUE))$combinations
+res[rev(order(res[,2])),]
+
+aggr(don, sortVar=TRUE)
+
+matrixplot(don,sortby=2) # marche pas sur Rstudio
+marginplot(don[,c("T9","maxO3")])
+
+# Creation of a categorical data set with "o" when observed and "m" when missing
+ mis.ind <- matrix("o", nrow = nrow(don), ncol = ncol(don))
+ mis.ind[is.na(don)] = "m"
+ dimnames(mis.ind) = dimnames(don)
+ mis.ind
+
+# Performing a multiple correspondence analysis to visualize the association
+library(FactoMineR)
+resMCA <- MCA(mis.ind)
+plot(resMCA, invis = "ind", title = "MCA graph of the categories")
+
+
+###########################
+#### Single imputation ####
+###########################
+
+## Single imputation with PCA 
+ 
+library(missMDA)
+## nb <- estim_ncpPCA(don, method.cv ="Kfold") # estimation of the number of dimensions - Time consuming
+## nb$ncp 
+## plot(0:5, nb$criterion, xlab = "nb dim", ylab = "MSEP")
+res.comp <- imputePCA(don, ncp = 2)
+res.comp$completeObs[1:3, ]
+ 
+indvar <- "T9"
+indNA <- which(is.na(don[,indvar]))
+plot(density(res.comp$completeObs[indNA, indvar]),main = "Observed and imputed values for T9", xlab = "T9")
+lines(density(res.comp$completeObs[which(!((1:nrow(don))%in%indNA)),indvar]),col = "red")
+legend("topleft",text.col = c("black","red"),legend = c(" Imputation","Observed values"))
+
+#Performing a PCA on the completed data set
+ imp <- cbind.data.frame(res.comp$completeObs, WindDirection)
+ res.pca <- PCA(imp, quanti.sup = 1, quali.sup = 12)
+ plot(res.pca, hab = 12, lab = "quali"); plot(res.pca, choix = "var")
+ res.pca$ind$coord #scores (principal components)
+res.pca$var$coord
+
+###########################
+#### Single imputation mixed data ####
+###########################
+
+
+ ## Mixed 
+ res.ncp <- estim_ncpFAMD(ozo)
+ res.famd <-imputeFAMD(ozo, ncp = 2)
+ res.famd$completeObs
+
+ library(missForest)
+ res.rf <- missForest(ozo)
+ res.rf$ximp
+ 
+ 
+ ## Categorical 
+data(vnf)
+
+# Look at the pattern of missing values with MCA
+MCA(vnf)
+
+#1) select the number of components
+nb <- estim_ncpMCA(vnf, ncp.max = 5) #Time-consuming, nb = 4
+
+#2) Impute the indicator matrix 
+res.impute <- imputeMCA(vnf, ncp = 4)
+res.impute$tab.disj
+res.impute$comp
+
+ 
+ ## Bloc imputation 
+ library(devtools) 
+ install_github("julierennes/denoiseR")
+ library(denoiseR)
+ 
+data(impactfactor)
+summary(impactfactor)
+year=NULL; for (i in 1: 15) year= c(year, seq(i,45,15)) 
+res.imp <- imputeMFA(impactfactor,  group = rep(3, 15),  type = rep("s", 15))
+
+## MFA on the imputed data set
+res.mfa  <-MFA(res.imp$completeObs, group=rep(3,15),  type=rep("s",15), 
+name.group=paste("year", 1999:2013,sep="_"),graph=F)
+
+plot(res.mfa, choix = "ind", select = "contrib 15", habillage = "group", cex = 0.7)
+points(res.mfa$ind$coord[c("Journal of Statistical Software", "Journal of the American Statistical Association", "Annals of Statistics"), 1:2], col=2, cex=0.6)
+text(res.mfa$ind$coord[c("Journal of Statistical Software"), 1], 
+res.mfa$ind$coord[c("Journal of Statistical Software"), 2],cex=1,
+labels=c("Journal of Statistical Software"),pos=3, col=2)
+plot.MFA(res.mfa,choix="var", cex=0.5,shadow=TRUE, autoLab = "yes")
+plot(res.mfa, select="IEEE/ACM Transactions on Networking",  partial="all", habillage="group",unselect=0.9,chrono=TRUE)
+
+#####################################
+######## Multiple Imputation ########
+#####################################
+
+library(Amelia)
+res.amelia <- amelia(don, m = 100)  
+
+library(mice)
+res.mice <- mice(don, m = 100, defaultMethod = "norm.boot") # here the variability of the regression parameters is obtained by bootstrap
+
+#library(missMDA)
+res.MIPCA <- MIPCA(don, ncp = 2, nboot  = 100)
+res.MIPCA$res.MI 
+
+## Checking and visualization of the imputations 
+
+plot(res.amelia)
+par(mfrow=c(1,1))
+compare.density(res.amelia, var = "T12")
+overimpute(res.amelia, var = "maxO3")
+
+# library(missMDA)
+res.over<-Overimpute(res.MIPCA)
+
+# visualization with PCA 
+plot(res.MIPCA, choice = "ind.supp"); plot(res.MIPCA, choice = "var")
+
+## Pooling the results 
+
+lm.mice.out <- with(res.mice, lm(maxO3 ~ T9+T12+T15+Ne9+Ne12+Ne15+Vx9+Vx12+Vx15+maxO3v))
+pool.mice <- pool(lm.mice.out)
+resultmice <- summary(pool.mice)
+
+# pool mipca
+imp<-prelim(res.mi = res.MIPCA, X = don) #creating a mids object
+fit <- with(data=imp,exp=lm(maxO3~T9+T12+T15+Ne9+Ne12+Ne15+Vx9+Vx12+Vx15+maxO3v))
+res.pool < -pool(fit)
+summary(res.pool)
+  
+ #pool Amelia
+names(res.amelia$imputations)
+res.amelia$imputations$imp1# the first imputed data set
+resamelia <- lapply(res.amelia$imputations, as.data.frame)
+# A regression on each imputed dataset
+fitamelia<-lapply(resamelia,lm, formula="maxO3~ T9+T12+T15+Ne9+Ne12+Ne15+Vx9+Vx12+Vx15+maxO3v")
+poolamelia <- pool(as.mira(fitamelia))
+summary(poolamelia)
+
+
+##########
+## Multiple Imputation categorical data
+?MIMCA
+
+
+###################################
+######## Ecological data PCA example #######
+###################################
+
+Ecolo <- read.csv("http://math.agrocampus-ouest.fr/infoglueDeliverLive/digitalAssets/85200_ecological.csv", header = TRUE, sep=";",dec=",")
+
+## Delete species with only missing values for contiuous variables
+ind <- which(rowSums(is.na(Ecolo[,-1])) == 6)
+biome <- Ecolo[-ind,1]    ### Keep a categorical variable
+Ecolo <- Ecolo[-ind,-1]   ### Select continuous variables
+dim(Ecolo)
+
+## proportion of missing values
+sum(is.na(Ecolo))/(nrow(Ecolo)*ncol(Ecolo)) # 55% of missing values
+
+## Delete species with missing values
+dim(na.omit(Ecolo)) # only 72 remaining species!
+
+#### Visualize the pattern
+library(VIM)
+aggr(Ecolo)
+aggr(Ecolo,only.miss=TRUE,numbers=TRUE,sortVar=TRUE)
+res <- summary(aggr(Ecolo,prop=TRUE,combined=TRUE))$combinations
+res[rev(order(res[,2])),]
+
+mis.ind <- matrix("o",nrow=nrow(Ecolo),ncol=ncol(Ecolo))
+mis.ind[is.na(Ecolo)] <- "m"
+dimnames(mis.ind) <- dimnames(Ecolo)
+library(FactoMineR)
+resMCA <- MCA(mis.ind)
+plot(resMCA,invis="ind",title="MCA graph of the categories")
+
+### Impute the incomplete data set
+
+# Imputation with the mean and PCA on the imputed data
+don <- cbind.data.frame(Ecolo,biome)
+res.pca <- PCA(don, quali.sup = 7, graph = FALSE) # default option to deal with NA is mean imputation
+plot(res.pca, hab=7, lab="quali")
+plot(res.pca, hab=7, lab="quali",invisible="ind")
+plot(res.pca, choix="var")
+
+# Imputation with the iterative PCA algorithm
+library(missMDA)
+### nb <- estim_ncpPCA(Ecolo,method.cv="Kfold",nbsim=100) ### Time consuming!
+res.comp <- imputePCA(Ecolo,ncp=2)
+
+#Perform a PCA on the completed data set
+imp <- cbind.data.frame(res.comp$completeObs,biome)
+res.pca <- PCA(imp,quali.sup=7,graph=FALSE)
+plot(res.pca, hab=7, lab="quali")
+plot(res.pca, hab=7, lab="quali",invisible="ind")
+plot(res.pca, choix="var")
+
+
+###############################################
+#### EM algorithm to estimate mu and Sigma ####
+###############################################
+library(norm)
+pre <- prelim.norm(as.matrix(don))
+thetahat <- em.norm(pre)
+getparam.norm(pre,thetahat)
+
+## Single imputation using a draw from a normal distribution
+library(norm)
+pre <- prelim.norm(as.matrix(don))
+thetahat <- em.norm(pre)
+rngseed(123)           ### must be done!
+imp <- imp.norm(pre,thetahat,don)
+```
+
